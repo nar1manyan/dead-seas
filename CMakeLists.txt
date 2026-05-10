@@ -22,7 +22,8 @@ target_include_directories(server PRIVATE
 
 target_link_libraries(server PRIVATE pthread)
 
-find_package(SFML 2.5 COMPONENTS graphics window system QUIET)
+# Client requires SFML graphics + audio (for music)
+find_package(SFML 2.5 COMPONENTS graphics window system audio QUIET)
 
 if(SFML_FOUND)
     add_executable(client
@@ -38,9 +39,10 @@ if(SFML_FOUND)
         sfml-graphics
         sfml-window
         sfml-system
+        sfml-audio     # needed for sf::Music
         pthread
     )
-    message(STATUS "SFML exist — enabled")
+    message(STATUS "SFML found — client enabled")
 else()
-    message(WARNING "SFML does not exist — disabled")
+    message(WARNING "SFML not found — client disabled")
 endif()

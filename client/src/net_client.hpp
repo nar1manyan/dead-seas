@@ -28,7 +28,6 @@ struct ServerMessages {
 class NetClient {
 public:
     NetClient() = default;
-
     ~NetClient() { disconnect(); }
 
     bool connect(const std::string &host, uint16_t port) {
@@ -40,9 +39,8 @@ public:
         addr.sin_port = htons(port);
         if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) <= 0) return false;
 
-        if (::connect(fd_, (sockaddr *) &addr, sizeof(addr)) < 0) {
-            close(fd_);
-            fd_ = -1;
+        if (::connect(fd_, (sockaddr *)&addr, sizeof(addr)) < 0) {
+            close(fd_); fd_ = -1;
             return false;
         }
 
@@ -52,15 +50,14 @@ public:
         fcntl(fd_, F_SETFL, flags | O_NONBLOCK);
 
         connected_ = true;
+        recvBuf_.clear();
+        recvPos_ = 0;
         LOG_INFO("Connected " + host + ":" + std::to_string(port));
         return true;
     }
 
     void disconnect() {
-        if (fd_ >= 0) {
-            close(fd_);
-            fd_ = -1;
-        }
+        if (fd_ >= 0) { close(fd_); fd_ = -1; }
         connected_ = false;
     }
 
@@ -76,8 +73,8 @@ public:
         if (!isConnected()) return false;
         C2S_InputPacket pkt{};
         pkt.flags = flags;
-        pkt.aimX = aimX;
-        pkt.aimY = aimY;
+        pkt.aimX  = aimX;
+        pkt.aimY  = aimY;
         return sendPacket(fd_, pkt);
     }
 
@@ -93,27 +90,34 @@ public:
             disconnect();
             return false;
         }
-        size_t pos = 0;
-        while (pos + 4 <= recvBuf_.size()) {
+        while (recvPos_ + 4 <= recvBuf_.size()) {
             uint32_t pktLen;
-            memcpy(&pktLen, recvBuf_.data() + pos, 4);
+            memcpy(&pktLen, recvBuf_.data() + recvPos_, 4);
             if (pktLen == 0 || pktLen > 65536) {
                 disconnect();
                 return false;
             }
-            if (pos + 4 + pktLen > recvBuf_.size()) break;
-            const uint8_t *payload = recvBuf_.data() + pos + 4;
-            sendNewPacket(payload, pktLen, out);
-            pos += 4 + pktLen;
+            if (recvPos_ + 4 + pktLen > recvBuf_.size()) break;
+
+            const uint8_t *payload = recvBuf_.data() + recvPos_ + 4;
+            dispatchPacket(payload, pktLen, out);
+            recvPos_ += 4 + pktLen;
         }
-        if (pos > 0) {
-            recvBuf_.erase(recvBuf_.begin(), recvBuf_.begin() + static_cast<long>(pos));
+
+        if (recvPos_ > 0) {
+            if (recvPos_ < recvBuf_.size())
+                recvBuf_.erase(recvBuf_.begin(),
+                               recvBuf_.begin() + static_cast<long>(recvPos_));
+            else
+                recvBuf_.clear();
+            recvPos_ = 0;
         }
+
         return true;
     }
 
 private:
-    void sendNewPacket(const uint8_t *data, uint32_t len, ServerMessages &out) {
+    void dispatchPacket(const uint8_t *data, uint32_t len, ServerMessages &out) {
         if (len == 0) return;
         auto type = static_cast<PacketType>(data[0]);
         switch (type) {
@@ -129,14 +133,13 @@ private:
                     out.hasState = true;
                 }
                 break;
-            case PacketType::S2C_EVENT: {
+            case PacketType::S2C_EVENT:
                 if (len >= sizeof(S2C_EventPacket)) {
                     S2C_EventPacket ev{};
                     memcpy(&ev, data, sizeof(ev));
                     out.events.push_back(ev);
                 }
                 break;
-            }
             default: break;
         }
     }
@@ -144,4 +147,5 @@ private:
     int fd_{-1};
     bool connected_{false};
     std::vector<uint8_t> recvBuf_;
+    size_t recvPos_{0};
 };

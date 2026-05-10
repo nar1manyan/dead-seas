@@ -14,10 +14,7 @@ inline float dist(float ax, float ay, float bx, float by) {
 
 inline void normalize(float &x, float &y) {
     float len = std::sqrt(x * x + y * y);
-    if (len > 0.0001f) {
-        x /= len;
-        y /= len;
-    }
+    if (len > 0.0001f) { x /= len; y /= len; }
 }
 
 struct Zombie {
@@ -59,9 +56,9 @@ struct Player {
         if (!alive) return;
         attackTimer = std::max(0.f, attackTimer - dt);
         float dx = 0.f, dy = 0.f;
-        if (inputFlags & InputFlag::MOVE_UP) dy -= 1.f;
-        if (inputFlags & InputFlag::MOVE_DOWN) dy += 1.f;
-        if (inputFlags & InputFlag::MOVE_LEFT) dx -= 1.f;
+        if (inputFlags & InputFlag::MOVE_UP)    dy -= 1.f;
+        if (inputFlags & InputFlag::MOVE_DOWN)  dy += 1.f;
+        if (inputFlags & InputFlag::MOVE_LEFT)  dx -= 1.f;
         if (inputFlags & InputFlag::MOVE_RIGHT) dx += 1.f;
         normalize(dx, dy);
         x += dx * Cfg::PLAYER_SPEED * dt;
@@ -88,7 +85,6 @@ public:
     void update(float dt) {
         std::unique_lock<std::shared_mutex> lk(mtx_);
         pendingEvents_.clear();
-
         waveTimer_ += dt;
         if (waveTimer_ >= Cfg::WAVE_INTERVAL) {
             waveTimer_ = 0.f;
@@ -101,8 +97,7 @@ public:
 
         player_.update(dt);
 
-        bool didAttack = (player_.inputFlags & InputFlag::ATTACK) &&
-                         player_.canAttack();
+        bool didAttack = (player_.inputFlags & InputFlag::ATTACK) && player_.canAttack();
         if (didAttack) {
             player_.attackTimer = Cfg::ATTACK_COOLDOWN;
             resolveAttack_locked();
@@ -122,7 +117,7 @@ public:
         }
 
         for (auto it = zombies_.begin(); it != zombies_.end();) {
-            it->deadFrames_ = it->alive ? 0 : it->deadFrames_ + 1;
+            if (!it->alive) ++it->deadFrames_;
             it = (it->deadFrames_ > 2) ? zombies_.erase(it) : ++it;
         }
 
@@ -140,20 +135,20 @@ public:
         std::shared_lock<std::shared_mutex> lk(mtx_);
         S2C_StatePacket pkt{};
         pkt.tick = tick_;
-        pkt.payload.playerPos = {player_.x, player_.y};
-        pkt.payload.playerLives = static_cast<int8_t>(player_.lives);
-        pkt.payload.playerAlive = player_.alive ? 1u : 0u;
-        pkt.payload.score = score_;
-        pkt.payload.wave = wave_;
-        pkt.payload.killStreak = killStreak_;
+        pkt.payload.playerPos    = {player_.x, player_.y};
+        pkt.payload.playerLives  = static_cast<int8_t>(player_.lives);
+        pkt.payload.playerAlive  = player_.alive ? 1u : 0u;
+        pkt.payload.score        = score_;
+        pkt.payload.wave         = wave_;
+        pkt.payload.killStreak   = killStreak_;
         uint8_t cnt = 0;
         for (const auto &z: zombies_) {
             if (cnt >= MAX_ZOMBIES) break;
-            auto &s = pkt.payload.zombies[cnt++];
-            s.id = z.id;
-            s.pos = {z.x, z.y};
-            s.hp = static_cast<uint8_t>(std::max(0, z.hp));
-            s.alive = z.alive ? 1u : 0u;
+            auto &s  = pkt.payload.zombies[cnt++];
+            s.id     = z.id;
+            s.pos    = {z.x, z.y};
+            s.hp     = static_cast<uint8_t>(std::max(0, z.hp));
+            s.alive  = z.alive ? 1u : 0u;
         }
         pkt.payload.zombieCount = cnt;
         return pkt;
@@ -161,18 +156,20 @@ public:
 
     std::vector<WorldEvent> drainEvents() {
         std::unique_lock<std::shared_mutex> lk(mtx_);
-        return std::move(pendingEvents_);
+        std::vector<WorldEvent> out;
+        out.swap(pendingEvents_);
+        return out;
     }
 
     void respawnPlayer() {
         std::unique_lock<std::shared_mutex> lk(mtx_);
         player_ = Player{};
         zombies_.clear();
-        wave_ = 1;
-        score_ = 0;
-        killStreak_ = 0;
-        waveTimer_ = 0.f;
-        tick_ = 0;
+        wave_        = 1;
+        score_       = 0;
+        killStreak_  = 0;
+        waveTimer_   = 0.f;
+        tick_        = 0;
         spawnWave_locked();
     }
 
@@ -188,7 +185,7 @@ private:
         float speedMult = 1.f + (wave_ - 1) * 0.08f;
         for (int i = 0; i < count; ++i) {
             ZombieExt z{};
-            z.id = ++nextZombieId_;
+            z.id    = ++nextZombieId_;
             z.speed = Cfg::ZOMBIE_SPEED_BASE * speedMult;
             spawnOnEdge_locked(z.x, z.y);
             zombies_.push_back(z);
@@ -200,18 +197,10 @@ private:
         std::uniform_real_distribution<float> wx(0.f, Cfg::WORLD_W);
         std::uniform_real_distribution<float> wy(0.f, Cfg::WORLD_H);
         switch (edge(rng_)) {
-            case 0: ox = wx(rng_);
-                oy = 0.f;
-                break;
-            case 1: ox = wx(rng_);
-                oy = Cfg::WORLD_H;
-                break;
-            case 2: ox = 0.f;
-                oy = wy(rng_);
-                break;
-            default: ox = Cfg::WORLD_W;
-                oy = wy(rng_);
-                break;
+            case 0: ox = wx(rng_); oy = 0.f;           break;
+            case 1: ox = wx(rng_); oy = Cfg::WORLD_H;  break;
+            case 2: ox = 0.f;      oy = wy(rng_);      break;
+            default: ox = Cfg::WORLD_W; oy = wy(rng_); break;
         }
     }
 
@@ -219,13 +208,8 @@ private:
         float aimDx = player_.aimX - player_.x;
         float aimDy = player_.aimY - player_.y;
         float aimLen = std::sqrt(aimDx * aimDx + aimDy * aimDy);
-        if (aimLen < 0.001f) {
-            aimDx = 1.f;
-            aimDy = 0.f;
-        } else {
-            aimDx /= aimLen;
-            aimDy /= aimLen;
-        }
+        if (aimLen < 0.001f) { aimDx = 1.f; aimDy = 0.f; }
+        else                 { aimDx /= aimLen; aimDy /= aimLen; }
 
         const float cosHalf = std::cos((Cfg::ATTACK_ANGLE * 3.14159f) / 180.f);
 
@@ -236,12 +220,8 @@ private:
 
             float zDx = z.x - player_.x, zDy = z.y - player_.y;
             float zLen = std::sqrt(zDx * zDx + zDy * zDy);
-            if (zLen > 0.001f) {
-                zDx /= zLen;
-                zDy /= zLen;
-            }
-            float dot = aimDx * zDx + aimDy * zDy;
-            if (dot < cosHalf) continue;
+            if (zLen > 0.001f) { zDx /= zLen; zDy /= zLen; }
+            if (aimDx * zDx + aimDy * zDy < cosHalf) continue;
 
             z.hp--;
             if (z.hp <= 0) {
